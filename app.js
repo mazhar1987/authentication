@@ -7,15 +7,10 @@ const express = require("express");
 const bodyParser = require("body-parser");
 const ejs = require("ejs");
 const mongoose = require("mongoose");
-const encrypt = require("mongoose-encryption");
-const md5 = require("md5");
-const bcrypt = require("bcrypt");
+const session = require("express-session");
+const passport = require("passport");
+const passportLocalMongoose = require("passport-local-mongoose");
 
-
-/**
- * Salting Password
- */
-const saltRounds = 10;
 
 
 /**
@@ -28,11 +23,23 @@ let port = process.env.PORT || 3000;
 
 /**
  * Add public (static) folder on express, set ejg and add bodyParser
+ * session, init passport, use passport to dealing with session
  */
 
 app.use(express.static("public"));
 app.set("view engine", "ejs");
-app.use(bodyParser.urlencoded({extended: true}));
+app.use(bodyParser.urlencoded({
+    extended: true
+}));
+
+app.use(session({
+    secret: "Our little secret.",
+    resave: false,
+    saveUninitialized: false
+}));
+
+app.use(passport.initialize());
+app.use(passport.session());
 
 
 /**
@@ -48,6 +55,12 @@ mongoose.connect("mongodb://localhost:27017/authentication",
 
 
 /**
+ * Remove deprecation warning
+ */
+mongoose.set('useCreateIndex', true);
+
+
+/**
  * Make User schema
  */
 
@@ -58,10 +71,9 @@ const userSchema = new mongoose.Schema({
 
 
 /**
- * Encryption Password on database
+ * Use passport in mongoose
  */
-
-userSchema.plugin(encrypt, {secret: process.env.SECRET, encryptedFields: ["password"]});
+userSchema.plugin(passportLocalMongoose);
 
 
 /**
@@ -70,6 +82,19 @@ userSchema.plugin(encrypt, {secret: process.env.SECRET, encryptedFields: ["passw
 
 const User = new mongoose.model("User", userSchema);
 
+
+/**
+ * Create passport local login strategy for users
+ * Setup passport serialize and deserialize for users
+ */
+passport.use(User.createStrategy());
+passport.serializeUser(User.serializeUser());
+passport.deserializeUser(User.deserializeUser());
+
+
+/**
+ * Home routing
+ */
 app.get("/", function (req, res) {
     res.render("home");
 });
@@ -84,24 +109,25 @@ app.route("/login")
     res.render("login");
 })
 .post(function (req, res) {
-    const username = req.body.username;
-    const password = req.body.password;
+    // Getting username and password when users writng in the login fields
+    const user = new User({
+        username: req.body.username,
+        password: req.body.password
+    });
 
-    // Find user on database and match with user type on the login page
-    User.findOne({email: username}, function (err, foundUser) {
+    req.login(user, function (err) {
         if (err) {
-            res.send(err);
+            console.log(err);
         } else {
-            if (foundUser) {
-                bcrypt.compare(password, foundUser.password, function(err, result) {
-                    if (result === true) {
-                        res.render("secrets");
-                    }
-                });
-            }
+            // After login successfully
+            passport.authenticate("local")(req, res, function () {
+                res.redirect("/secrets");
+            });
         }
     });
+
 });
+
 
 /**
  * Make register route
@@ -112,25 +138,39 @@ app.route("/register")
     res.render("register");
 })
 .post(function (req, res) {
-    // Salting and Hashing password
-    bcrypt.hash(req.body.password, saltRounds, function(err, hash) {
-        // Store hashing password in DB
-        const newUser = new User(
-            {
-                email: req.body.username,
-                password: hash
-            }
-        );
-    
-        newUser.save(function (err) {
-            if (err) {
-                res.send(err);
-            } else {
-                res.render("secrets");
-            }
-        });
+    // Register user
+    User.register({
+        username: req.body.username
+    }, req.body.password, function (err, user) {
+        if (err) {
+            console.log(err);
+            res.redirect("/register");
+        } else {
+            passport.authenticate("local")(req, res, function () {
+                res.redirect("/secrets");
+            });
+        }
     });
+});
 
+/**
+ * Make secrets route
+ */
+app.route("/secrets")
+.get(function (req, res) {
+    if (req.isAuthenticated()) {
+        res.render("secrets");
+    } else {
+        res.redirect("/login");
+    }
+});
+
+/**
+ * Make logout route
+ */
+app.get("/logout", function (req, res) {
+    req.logout();
+    res.redirect("/");
 });
 
 
