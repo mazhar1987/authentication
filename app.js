@@ -9,6 +9,13 @@ const ejs = require("ejs");
 const mongoose = require("mongoose");
 const encrypt = require("mongoose-encryption");
 const md5 = require("md5");
+const bcrypt = require("bcrypt");
+
+
+/**
+ * Salting Password
+ */
+const saltRounds = 10;
 
 
 /**
@@ -78,7 +85,7 @@ app.route("/login")
 })
 .post(function (req, res) {
     const username = req.body.username;
-    const password = md5(req.body.password);
+    const password = req.body.password;
 
     // Find user on database and match with user type on the login page
     User.findOne({email: username}, function (err, foundUser) {
@@ -86,9 +93,11 @@ app.route("/login")
             res.send(err);
         } else {
             if (foundUser) {
-                if (foundUser.password === password) {
-                    res.render("secrets");
-                }
+                bcrypt.compare(password, foundUser.password, function(err, result) {
+                    if (result === true) {
+                        res.render("secrets");
+                    }
+                });
             }
         }
     });
@@ -103,20 +112,25 @@ app.route("/register")
     res.render("register");
 })
 .post(function (req, res) {
-    const newUser = new User(
-        {
-            email: req.body.username,
-            password: md5(req.body.password)
-        }
-    );
-
-    newUser.save(function (err) {
-        if (err) {
-            res.send(err);
-        } else {
-            res.render("secrets");
-        }
+    // Salting and Hashing password
+    bcrypt.hash(req.body.password, saltRounds, function(err, hash) {
+        // Store hashing password in DB
+        const newUser = new User(
+            {
+                email: req.body.username,
+                password: hash
+            }
+        );
+    
+        newUser.save(function (err) {
+            if (err) {
+                res.send(err);
+            } else {
+                res.render("secrets");
+            }
+        });
     });
+
 });
 
 
